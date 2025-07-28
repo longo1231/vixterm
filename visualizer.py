@@ -125,62 +125,10 @@ class VIXVisualizer:
                                      save_path: Optional[str] = None) -> plt.Figure:
         """Create comprehensive dashboard with expanded term structure."""
         
-        fig = plt.figure(figsize=(20, 14))
+        fig = plt.figure(figsize=(20, 12))  # Simplified single chart layout
         
-        # Top left: Points Spreads
-        ax1 = plt.subplot2grid((2, 2), (0, 0))
-        points_data = analysis_results['points_spreads']
-        
-        bars = ax1.bar(['Spot to Front', 'Front to Second'], 
-                      [points_data['spot_to_front'], points_data['front_to_second']],
-                      color=['skyblue', 'lightcoral'])
-        ax1.set_title('Points Spreads', fontsize=14, fontweight='bold')
-        ax1.set_ylabel('VIX Points')
-        ax1.axhline(y=0, color='black', linestyle='-', alpha=0.3)
-        ax1.grid(True, alpha=0.3)
-        
-        # Add value labels on bars
-        for bar in bars:
-            height = bar.get_height()
-            ax1.annotate(f'{height:.2f}',
-                        xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 3),  # 3 points vertical offset
-                        textcoords="offset points",
-                        ha='center', va='bottom', fontweight='bold')
-        
-        # Top right: Inversions
-        ax2 = plt.subplot2grid((2, 2), (0, 1))
-        inversions = analysis_results['inversions']
-        
-        if inversions:
-            inversion_labels = []
-            inversion_magnitudes = []
-            for inv in inversions:
-                inversion_labels.append(f"{inv['contract1']} > {inv['contract2']}")
-                inversion_magnitudes.append(inv['magnitude'])
-            
-            bars = ax2.barh(inversion_labels, inversion_magnitudes, color='red', alpha=0.7)
-            ax2.set_title('Term Structure Inversions', fontsize=14, fontweight='bold')
-            ax2.set_xlabel('Magnitude (Points)')
-            
-            # Add value labels
-            for i, bar in enumerate(bars):
-                width = bar.get_width()
-                ax2.annotate(f'{width:.2f}',
-                            xy=(width, bar.get_y() + bar.get_height() / 2),
-                            xytext=(3, 0),
-                            textcoords="offset points",
-                            ha='left', va='center', fontweight='bold')
-        else:
-            ax2.text(0.5, 0.5, '✅ No Inversions\nClean Term Structure', 
-                    ha='center', va='center', transform=ax2.transAxes,
-                    fontsize=12, bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgreen"))
-            ax2.set_title('Term Structure Inversions', fontsize=14, fontweight='bold')
-        
-        ax2.grid(True, alpha=0.3)
-        
-        # Bottom half: Expanded Term Structure Chart
-        ax3 = plt.subplot2grid((2, 2), (1, 0), colspan=2)
+        # Single main chart: VIX Term Structure
+        ax = plt.subplot(1, 1, 1)
         
         if not futures_data.empty:
             days = futures_data['days_to_expiration'].values
@@ -191,42 +139,105 @@ class VIXVisualizer:
             all_prices = np.concatenate([[spot_vix], prices])
             
             # Plot the curve
-            ax3.plot(all_days, all_prices, 'bo-', linewidth=3, markersize=8, 
+            ax.plot(all_days, all_prices, 'bo-', linewidth=3, markersize=8, 
                     label='VIX Term Structure')
             
             # Highlight spot VIX
-            ax3.plot(0, spot_vix, 'ro', markersize=12, label=f'VIX Spot: {spot_vix:.2f}')
+            ax.plot(0, spot_vix, 'ro', markersize=12, label=f'VIX Spot: {spot_vix:.2f}')
             
             # Add contract labels for ALL contracts with prices
             for i, (day, price, symbol) in enumerate(zip(days, prices, futures_data['symbol'])):
-                ax3.annotate(f'{symbol}\n{price:.2f}', (day, price), 
+                ax.annotate(f'{symbol}\n{price:.2f}', (day, price), 
                            textcoords="offset points", xytext=(0,10), 
                            ha='center', fontsize=9, fontweight='bold')
             
-            # Add roll carry analysis box in top right corner of chart
+            # Add enlarged roll carry analysis box in top right corner of chart
             roll_data = analysis_results['roll_carry']
-            roll_text = f"Roll Carry Analysis\n"
-            roll_text += f"Synthetic Index: {roll_data['synthetic_index']:.2f}\n"
-            roll_text += f"Roll Points: {roll_data['roll_pts']:.4f}\n"
-            roll_text += f"Roll Carry: {roll_data['roll_pct']:.2f}%"
             
-            # Determine box color based on roll carry sign
+            # Determine colors based on roll carry sign
             if roll_data['roll_pct'] > 0:
                 box_color = '#e8f5e8'  # Light green for positive carry
+                pct_color = 'darkgreen'
             elif roll_data['roll_pct'] < 0:
                 box_color = '#ffebee'  # Light red for negative carry
+                pct_color = 'darkred'
             else:
                 box_color = '#f5f5f5'  # Light gray for neutral
+                pct_color = 'black'
             
-            ax3.text(0.98, 0.02, roll_text, transform=ax3.transAxes, 
-                    fontsize=11, verticalalignment='bottom', horizontalalignment='right',
-                    bbox=dict(boxstyle="round,pad=0.5", facecolor=box_color, alpha=0.8))
+            # Create larger, more prominent roll carry box
+            ax.text(0.98, 0.15, "ROLL CARRY ANALYSIS", transform=ax.transAxes, 
+                   fontsize=14, fontweight='bold', ha='right', va='bottom')
+            ax.text(0.98, 0.11, f"Synthetic 30-Day Index: {roll_data['synthetic_index']:.2f}", 
+                   transform=ax.transAxes, fontsize=12, ha='right', va='bottom')
+            ax.text(0.98, 0.07, f"Roll Points: {roll_data['roll_pts']:.4f}", 
+                   transform=ax.transAxes, fontsize=12, ha='right', va='bottom')
+            ax.text(0.98, 0.02, f"ROLL CARRY: {roll_data['roll_pct']:.2f}%", 
+                   transform=ax.transAxes, fontsize=16, fontweight='bold', 
+                   ha='right', va='bottom', color=pct_color,
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor=box_color, alpha=0.9))
         
-        ax3.set_xlabel('Days to Expiration', fontsize=12)
-        ax3.set_ylabel('VIX Level', fontsize=12)
-        ax3.set_title('VIX Term Structure', fontsize=16, fontweight='bold')
-        ax3.grid(True, alpha=0.3)
-        ax3.legend(fontsize=10)
+        ax.set_ylabel('VIX Level', fontsize=12)
+        ax.set_title('VIX Term Structure', fontsize=16, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=10)
+        
+        # Add concise text rows below the chart for contango % and differences
+        if not futures_data.empty and len(futures_data) > 1:
+            # Calculate from spot to first future, then between futures
+            all_prices = np.concatenate([[spot_vix], prices])
+            
+            # Calculate differences and percentages (starting from index 1)
+            contango_pcts = []
+            differences = []
+            
+            for i in range(1, len(all_prices)):
+                diff = all_prices[i] - all_prices[i-1]
+                pct = (diff / all_prices[i]) * 100 if all_prices[i] != 0 else 0
+                contango_pcts.append(pct)
+                differences.append(diff)
+            
+            # Create aligned text that matches the contract positions on the chart
+            # Position text under each contract based on days to expiration
+            x_positions = all_days[1:]  # Skip spot (position 0), start from first contract
+            symbols = ['VIX Spot'] + list(futures_data['symbol'])
+            pair_labels = [f"{symbols[i][:3]}→{symbols[i+1][:6]}" for i in range(len(symbols)-1)]
+            
+            for i, (x_pos, pct, diff, label) in enumerate(zip(x_positions, contango_pcts, differences, pair_labels)):
+                # Convert days to normalized chart coordinates
+                x_norm = (x_pos - min(all_days)) / (max(all_days) - min(all_days))
+                
+                # Add percentage and difference text aligned under each contract
+                ax.text(x_norm, -0.12, f"{pct:+.1f}%", transform=ax.transAxes, 
+                       fontsize=9, fontfamily='monospace', ha='center', fontweight='bold')
+                ax.text(x_norm, -0.16, f"{diff:+.2f}", transform=ax.transAxes, 
+                       fontsize=9, fontfamily='monospace', ha='center')
+            
+            # Add row labels on the left
+            ax.text(0.02, -0.12, "Contango %:", transform=ax.transAxes, 
+                   fontsize=10, fontweight='bold')
+            ax.text(0.02, -0.16, "Differences:", transform=ax.transAxes, 
+                   fontsize=10, fontweight='bold')
+        
+        # Add trading signal and commentary at the bottom
+        curve_shape = analysis_results.get('curve_shape', 'N/A')
+        trading_signal = analysis_results.get('trading_signal', 'N/A')
+        inversions = analysis_results.get('inversions', [])
+        
+        # Create comprehensive commentary
+        if inversions:
+            inversion_text = f"⚠️ {len(inversions)} INVERSIONS DETECTED"
+            signal_color = 'red'
+        else:
+            inversion_text = "✅ Clean Term Structure"
+            signal_color = 'darkgreen'
+        
+        commentary = f"{inversion_text} | Curve: {curve_shape} | Signal: {trading_signal}"
+        
+        ax.text(0.5, -0.22, commentary, transform=ax.transAxes, 
+               fontsize=12, fontweight='bold', ha='center', 
+               bbox=dict(boxstyle="round,pad=0.5", facecolor='lightgray', alpha=0.8),
+               color=signal_color)
         
         # Overall title
         plt.suptitle(f'VIX Term Structure Analysis - {analysis_results["timestamp"][:10]}', 
