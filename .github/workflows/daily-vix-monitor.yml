@@ -58,7 +58,7 @@ jobs:
     
     # Step 7: Upload results as artifacts (backup)
     - name: Upload analysis results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: vix-analysis-results
         path: |
