@@ -19,12 +19,31 @@
 - **Integration tests**: End-to-end pipeline testing with mock data
 
 ### 3. Analysis Enhancements
-- **Historical comparison**: Compare current structure to historical averages
-  - Add "unusual" alerts when current metrics are X standard deviations from norm
-  - Store historical data for trend analysis
-- **VIX9D integration**: Include 9-day VIX for shorter-term structure analysis
-- **Options flow correlation**: Correlate term structure with unusual options activity
-- **Multiple timeframe analysis**: Add weekly/monthly structure trends
+
+**Statistical Rigor**
+- **Z-score analysis**: Compare current metrics to historical distributions
+  - "Current contango is 2.3 standard deviations above 1-year average"
+  - Percentile rankings: "Roll carry in 95th percentile of past year"
+- **Regime detection**: Identify structural breaks using changepoint detection
+- **Volatility forecasting**: GARCH models predicting VIX from term structure
+
+**Historical Context Integration**  
+- **CSV data pipeline**: Download CBOE historical futures data, update periodically
+- **Seasonal patterns**: "August typically shows 15% higher contango than current"
+- **Market stress correlation**: Compare structure to VIX spike periods (2008, 2020, etc.)
+- **Fed policy correlation**: Overlay FOMC meeting dates with structure changes
+
+**Advanced Mathematical Analysis**
+- **Principal Component Analysis**: Identify the key factors driving curve movements
+- **Mean reversion signals**: Statistical tests for when structure will normalize
+- **Volatility surface integration**: Compare VIX futures to options implied vol
+- **Cross-asset signals**: Correlate with credit spreads (HYG/LQD), equity flows
+
+**Actionable Trading Intelligence**
+- **Backtest framework**: Test trading signals against historical performance
+- **Kelly criterion**: Optimal position sizing based on signal strength
+- **Risk-adjusted returns**: Sharpe ratios for different structure-based strategies
+- **VIX ETF analysis**: Predict VIXY/SVXY performance from roll carry
 
 ### 4. Visualization Improvements
 - **Interactive charts**: HTML/JavaScript charts for web viewing
@@ -39,7 +58,16 @@
 - **SMS alerts**: Critical alerts via text message for urgent situations
 
 ### 6. Data & Storage
-- **Historical database**: Store all daily analyses for backtesting
+
+**Historical Data Pipeline**
+- **CBOE CSV integration**: Download historical VIX futures data from CBOE's free CSV files
+  - Automate periodic updates (weekly/monthly) 
+  - Store in local SQLite or cloud database
+- **Data validation**: Ensure historical data quality and continuity
+- **Backfill analysis**: Retroactively run current algorithms on historical data
+
+**Advanced Storage**
+- **Time series database**: Efficient storage for high-frequency analysis
 - **Cloud storage integration**: Archive results to AWS S3/Google Cloud
 - **API endpoints**: Expose analysis data via REST API
 - **Data export**: Export historical data to CSV/Excel for analysis
