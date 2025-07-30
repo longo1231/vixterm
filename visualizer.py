@@ -145,6 +145,11 @@ class VIXVisualizer:
             # Highlight spot VIX
             ax.plot(0, spot_vix, 'ro', markersize=12, label=f'VIX Spot: {spot_vix:.2f}')
             
+            # Add spot VIX label
+            ax.annotate(f'VIX Spot\n{spot_vix:.2f}', (0, spot_vix), 
+                       textcoords="offset points", xytext=(0,10), 
+                       ha='center', fontsize=9, fontweight='bold')
+            
             # Add contract labels for ALL contracts with prices
             for i, (day, price, symbol) in enumerate(zip(days, prices, futures_data['symbol'])):
                 ax.annotate(f'{symbol}\n{price:.2f}', (day, price), 
@@ -178,9 +183,34 @@ class VIXVisualizer:
                    bbox=dict(boxstyle="round,pad=0.3", facecolor=box_color, alpha=0.9))
         
         ax.set_ylabel('VIX Level', fontsize=12)
+        # Remove the bottom x-axis label since we now have expiry dates on top
+        ax.set_xlabel('')
         ax.set_title('VIX Term Structure', fontsize=16, fontweight='bold')
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=10)
+        
+        # Add secondary x-axis with actual expiry dates if we have futures data
+        if not futures_data.empty:
+            # Create secondary x-axis for dates
+            ax2 = ax.twiny()
+            
+            # Use actual expiration dates as labels
+            tick_positions = all_days
+            tick_labels = ['Spot']
+            
+            # Format expiration dates as MM/DD
+            for _, row in futures_data.iterrows():
+                exp_date = row['expiration']
+                if hasattr(exp_date, 'strftime'):
+                    tick_labels.append(exp_date.strftime('%m/%d'))
+                else:
+                    # Fallback to symbol if date format issue
+                    tick_labels.append(row['symbol'].replace('/', ''))
+            
+            ax2.set_xlim(ax.get_xlim())
+            ax2.set_xticks(tick_positions)
+            ax2.set_xticklabels(tick_labels, fontsize=9, rotation=45, ha='left')
+            ax2.set_xlabel('Expiry Dates', fontsize=11, labelpad=10)
         
         # Add concise text rows below the chart for contango % and differences
         if not futures_data.empty and len(futures_data) > 1:
@@ -208,16 +238,18 @@ class VIXVisualizer:
                 x_norm = (x_pos - min(all_days)) / (max(all_days) - min(all_days))
                 
                 # Add percentage and difference text aligned under each contract
-                ax.text(x_norm, -0.12, f"{pct:+.1f}%", transform=ax.transAxes, 
-                       fontsize=9, fontfamily='monospace', ha='center', fontweight='bold')
-                ax.text(x_norm, -0.16, f"{diff:+.2f}", transform=ax.transAxes, 
-                       fontsize=9, fontfamily='monospace', ha='center')
+                # Add extra spacing for the first column to prevent smooshing with label
+                x_offset = 0.05 if i == 0 else 0  # Extra spacing for first column only
+                ax.text(x_norm + x_offset, -0.12, f"{pct:+.1f}%", transform=ax.transAxes, 
+                       fontsize=11, fontfamily='monospace', ha='center', fontweight='bold')
+                ax.text(x_norm + x_offset, -0.16, f"{diff:+.2f}", transform=ax.transAxes, 
+                       fontsize=11, fontfamily='monospace', ha='center')
             
-            # Add row labels on the left
+            # Add row labels on the left with extra spacing for first column
             ax.text(0.02, -0.12, "Contango %:", transform=ax.transAxes, 
-                   fontsize=10, fontweight='bold')
+                   fontsize=12, fontweight='bold')
             ax.text(0.02, -0.16, "Differences:", transform=ax.transAxes, 
-                   fontsize=10, fontweight='bold')
+                   fontsize=12, fontweight='bold')
         
         # Add trading signal and commentary at the bottom
         curve_shape = analysis_results.get('curve_shape', 'N/A')
