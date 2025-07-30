@@ -1,0 +1,67 @@
+name: Daily VIX Monitor
+
+# When to run this workflow
+on:
+  schedule:
+    # Run Monday-Friday at 4:45 PM EST (21:45 UTC)
+    # This gives market time to close and data to be available
+    - cron: '45 21 * * 1-5'
+  
+  # Allow manual triggering for testing
+  workflow_dispatch:
+
+# Define what the workflow does
+jobs:
+  vix-analysis:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # Step 1: Get the code from your repository
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    # Step 2: Set up Python environment
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    # Step 3: Install Chrome for web scraping
+    - name: Install Chrome
+      run: |
+        wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+    
+    # Step 4: Install Python dependencies
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    # Step 5: Run the VIX analysis
+    - name: Run VIX analysis
+      run: |
+        python main.py --save-plots --save-data
+    
+    # Step 6: Send email with results
+    - name: Send email notification
+      env:
+        EMAIL_HOST: ${{ secrets.EMAIL_HOST }}
+        EMAIL_PORT: ${{ secrets.EMAIL_PORT }}
+        EMAIL_USER: ${{ secrets.EMAIL_USER }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+      run: |
+        python email_sender.py
+    
+    # Step 7: Upload results as artifacts (backup)
+    - name: Upload analysis results
+      uses: actions/upload-artifact@v3
+      with:
+        name: vix-analysis-results
+        path: |
+          outputs/charts/*.png
+          outputs/data/*.txt
+        retention-days: 30
