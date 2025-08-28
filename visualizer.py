@@ -250,7 +250,16 @@ class VIXVisualizer:
                    transform=ax.transAxes, fontsize=12, ha='right', va='bottom')
             ax.text(0.98, 0.07, f"Roll Points: {roll_data['roll_pts']:.4f}", 
                    transform=ax.transAxes, fontsize=12, ha='right', va='bottom')
-            ax.text(0.98, 0.02, f"ROLL CARRY: {roll_data['roll_pct']:.2f}%", 
+            
+            # Add percentile ranking if available
+            percentile_text = ""
+            if 'statistical_context' in analysis_results:
+                stats = analysis_results['statistical_context'].get('one_year_stats', {})
+                if 'roll_carry_pct' in stats:
+                    carry_percentile = stats['roll_carry_pct']['percentile']
+                    percentile_text = f" ({carry_percentile:.0f}th %ile)"
+            
+            ax.text(0.98, 0.02, f"ROLL CARRY: {roll_data['roll_pct']:.2f}%{percentile_text}", 
                    transform=ax.transAxes, fontsize=16, fontweight='bold', 
                    ha='right', va='bottom', color=pct_color,
                    bbox=dict(boxstyle="round,pad=0.3", facecolor=box_color, alpha=0.9))
@@ -339,12 +348,19 @@ class VIXVisualizer:
         
         commentary = f"{inversion_text} | Curve: {curve_shape} | Signal: {trading_signal}"
         
-        ax.text(0.5, -0.22, commentary, transform=ax.transAxes, 
+        # Add statistical insights if available
+        if 'statistical_context' in analysis_results:
+            insights = analysis_results['statistical_context'].get('insights', [])
+            if insights:
+                # Display the most important insight
+                commentary += f"\n{insights[0]}"
+        
+        ax.text(0.5, -0.24, commentary, transform=ax.transAxes, 
                fontsize=12, fontweight='bold', ha='center', 
                bbox=dict(boxstyle="round,pad=0.5", facecolor='lightgray', alpha=0.8),
-               color=signal_color)
+               color=signal_color, multialignment='center')
         
-        # Enhanced title with historical context
+        # Enhanced title with historical and statistical context
         title = f'VIX Term Structure Analysis - {analysis_results["timestamp"][:10]}'
         if has_historical:
             changes = analysis_results.get('changes', {})
@@ -352,6 +368,13 @@ class VIXVisualizer:
             if vix_change.get('absolute', 0) != 0:
                 direction_symbol = "↗" if vix_change['direction'] == 'up' else "↘"
                 title += f'   |   VIX {direction_symbol} {vix_change["absolute"]:+.2f} ({vix_change["percentage"]:+.1f}%)'
+        
+        # Add statistical context to title if available
+        if 'statistical_context' in analysis_results:
+            stats = analysis_results['statistical_context'].get('one_year_stats', {})
+            if 'spot_vix' in stats:
+                vix_percentile = stats['spot_vix'].get('percentile', 50)
+                title += f'   |   {vix_percentile:.0f}th %ile (1yr)'
         
         plt.suptitle(title, fontsize=18, fontweight='bold')
         plt.tight_layout()

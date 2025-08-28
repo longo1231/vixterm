@@ -42,8 +42,9 @@ class VIXEmailSender:
         return latest_chart, latest_data
     
     def read_summary_data(self, data_file: str) -> dict:
-        """Extract key metrics from summary file for email body with historical context."""
+        """Extract key metrics from summary file for email body with historical and statistical context."""
         metrics = {}
+        statistical_insights = []
         
         try:
             with open(data_file, 'r') as f:
@@ -51,6 +52,8 @@ class VIXEmailSender:
                 
                 # Extract key information
                 lines = content.split('\n')
+                in_statistical_section = False
+                
                 for line in lines:
                     if 'VIX Spot:' in line:
                         # Enhanced to capture change info
@@ -78,7 +81,22 @@ class VIXEmailSender:
                     elif line.strip() and 'VIX up' in line and 'points' in line:
                         # Capture historical summary
                         metrics['historical_summary'] = line.strip()
+                    elif 'STATISTICAL CONTEXT' in line:
+                        in_statistical_section = True
+                    elif in_statistical_section and '📊' in line:
+                        statistical_insights.append(line.strip())
+                    elif in_statistical_section and ('percentile' in line.lower() or '%ile' in line):
+                        # Capture percentile information
+                        if 'VIX:' in line and 'percentile' in line:
+                            metrics['vix_percentile'] = line.split('percentile')[0].split()[-1]
+                        elif 'Contango:' in line and 'percentile' in line:
+                            metrics['contango_percentile'] = line.split('percentile')[0].split()[-1]
+                        elif 'Roll' in line and 'percentile' in line:
+                            metrics['roll_percentile'] = line.split('percentile')[0].split()[-1]
                 
+                if statistical_insights:
+                    metrics['statistical_insights'] = statistical_insights[:3]  # Top 3 insights
+                    
         except Exception as e:
             print(f"⚠️ Warning: Could not parse summary file: {e}")
             
@@ -126,11 +144,13 @@ class VIXEmailSender:
                         <h3 style="margin: 0 0 5px 0; color: #007bff;">VIX Spot</h3>
                         <p style="margin: 0; font-size: 24px; font-weight: bold;">{metrics.get('spot_vix', 'N/A')}</p>
                         {f'<p style="margin: 5px 0 0 0; font-size: 14px; color: #666;">{metrics.get("spot_vix_full", "").replace(metrics.get("spot_vix", ""), "").strip()}</p>' if metrics.get('has_historical', False) else ''}
+                        {f'<p style="margin: 5px 0 0 0; font-size: 12px; color: #6c757d;"><strong>{metrics.get("vix_percentile", "N/A")}th percentile</strong> (1yr)</p>' if metrics.get('vix_percentile') else ''}
                     </div>
                     
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745;">
                         <h3 style="margin: 0 0 5px 0; color: #28a745;">Roll Carry</h3>
                         <p style="margin: 0; font-size: 24px; font-weight: bold;">{metrics.get('roll_carry', 'N/A')}</p>
+                        {f'<p style="margin: 5px 0 0 0; font-size: 12px; color: #6c757d;"><strong>{metrics.get("roll_percentile", "N/A")}th percentile</strong> (1yr)</p>' if metrics.get('roll_percentile') else ''}
                     </div>
                 </div>
                 
@@ -145,6 +165,11 @@ class VIXEmailSender:
                     <p style="margin: 0; font-style: italic;">{metrics.get('historical_summary', 'Historical context not available')}</p>
                     {f'<p style="margin: 5px 0 0 0;"><strong>Previous VIX:</strong> {metrics.get("previous_vix", "N/A")}</p>' if metrics.get('previous_vix') else ''}
                 </div>''' if metrics.get('has_historical', False) else ''}
+                
+                {f'''<div style="background: #e8f5e9; padding: 15px; border-radius: 8px; border-left: 4px solid #4caf50; margin-bottom: 20px;">
+                    <h3 style="margin: 0 0 10px 0; color: #2e7d32;">📊 Statistical Context (1-Year)</h3>
+                    {'<br>'.join([f'<p style="margin: 5px 0;">{insight}</p>' for insight in metrics.get('statistical_insights', [])])}
+                </div>''' if metrics.get('statistical_insights') else ''}
                 
                 <div style="background: #e7f3ff; padding: 15px; border-radius: 8px; border-left: 4px solid #0066cc;">
                     <h3 style="margin: 0 0 10px 0; color: #0066cc;">📎 Attachments</h3>

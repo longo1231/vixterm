@@ -72,6 +72,36 @@ HISTORICAL CONTEXT
 {changes.get('summary', 'No previous data available for comparison')}
 """
 
+    # Add statistical context if available
+    if 'statistical_context' in analysis_results:
+        stats_context = analysis_results['statistical_context']
+        if 'one_year_stats' in stats_context:
+            stats = stats_context['one_year_stats']
+            summary += "\nSTATISTICAL CONTEXT (1-Year)\n"
+            
+            # VIX percentile
+            if 'spot_vix' in stats:
+                vix_stats = stats['spot_vix']
+                summary += f"VIX: {vix_stats['percentile']:.0f}th percentile (current: {vix_stats['current']:.2f}, mean: {vix_stats['mean']:.2f})\n"
+            
+            # Contango percentile
+            if 'contango_pct' in stats:
+                contango_stats = stats['contango_pct']
+                summary += f"Contango: {contango_stats['percentile']:.0f}th percentile (current: {contango_stats['current']:.1f}%, mean: {contango_stats['mean']:.1f}%)\n"
+            
+            # Roll carry percentile
+            if 'roll_carry_pct' in stats:
+                carry_stats = stats['roll_carry_pct']
+                summary += f"Roll Carry: {carry_stats['percentile']:.0f}th percentile (current: {carry_stats['current']:.2f}%, mean: {carry_stats['mean']:.2f}%)\n"
+            
+            # Insights
+            if 'insights' in stats_context:
+                insights = stats_context['insights']
+                if insights:
+                    summary += "\nKey Insights:\n"
+                    for insight in insights[:3]:  # Top 3 insights
+                        summary += f"{insight}\n"
+
     # Points analysis section
     summary += f"""
 POINTS ANALYSIS

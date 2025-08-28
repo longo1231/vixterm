@@ -152,6 +152,11 @@ class TermStructureAnalyzer:
                 historical_context = self.get_historical_context()
                 if historical_context:
                     base_analysis.update(historical_context)
+                
+                # Add statistical context
+                statistical_context = self.get_statistical_context()
+                if statistical_context and 'error' not in statistical_context:
+                    base_analysis['statistical_context'] = statistical_context
                     
             except Exception as e:
                 print(f"⚠️ Historical context failed: {e}")
@@ -253,6 +258,108 @@ class TermStructureAnalyzer:
         except Exception as e:
             print(f"❌ Error storing analysis: {e}")
             return False
+    
+    def get_statistical_context(self) -> Optional[Dict]:
+        """Get statistical context comparing current metrics to historical distributions."""
+        if not self.historical_data:
+            return None
+            
+        try:
+            # Calculate contango percentage
+            spreads = self.calculate_points_spreads()
+            contango_pct = (spreads['spot_to_front'] / self.spot_vix * 100) if self.spot_vix > 0 else 0
+            
+            # Prepare current values for statistical analysis
+            current_values = {
+                'spot_vix': self.spot_vix,
+                'roll_carry_pct': self.calculate_roll_carry().get('roll_pct', 0),
+                'contango_pct': contango_pct,
+                'spot_to_front': spreads['spot_to_front'],
+                'front_to_second': spreads['front_to_second'],
+                'curve_shape': self._classify_curve_shape()
+            }
+            
+            # Get statistical context for 1-year lookback
+            stats_1y = self.historical_data.calculate_statistical_context(current_values, lookback_days=252)
+            
+            # Get percentile rankings for multiple periods
+            percentile_rankings = self.historical_data.get_percentile_rankings(
+                current_values, 
+                periods=[30, 90, 252]
+            )
+            
+            # Get extreme values
+            extremes = self.historical_data.get_extreme_values(lookback_days=252)
+            
+            # Generate insights based on statistics
+            insights = self._generate_statistical_insights(stats_1y, percentile_rankings)
+            
+            return {
+                'one_year_stats': stats_1y,
+                'percentile_rankings': percentile_rankings,
+                'extreme_values': extremes,
+                'insights': insights
+            }
+            
+        except Exception as e:
+            print(f"❌ Error calculating statistical context: {e}")
+            return {'error': str(e)}
+    
+    def _generate_statistical_insights(self, stats: Dict, rankings: Dict) -> List[str]:
+        """Generate actionable insights from statistical analysis."""
+        insights = []
+        
+        # VIX percentile insight
+        if 'spot_vix' in stats:
+            vix_stats = stats['spot_vix']
+            percentile = vix_stats.get('percentile', 50)
+            z_score = vix_stats.get('z_score', 0)
+            
+            if percentile >= 90:
+                insights.append(f"📊 VIX at {percentile:.0f}th percentile (1yr) - Extremely elevated volatility")
+            elif percentile >= 75:
+                insights.append(f"📊 VIX at {percentile:.0f}th percentile (1yr) - Above normal volatility")
+            elif percentile <= 10:
+                insights.append(f"📊 VIX at {percentile:.0f}th percentile (1yr) - Extremely low volatility")
+            elif percentile <= 25:
+                insights.append(f"📊 VIX at {percentile:.0f}th percentile (1yr) - Below normal volatility")
+            
+            if abs(z_score) >= 2:
+                insights.append(f"⚠️ VIX is {abs(z_score):.1f}σ {'above' if z_score > 0 else 'below'} mean")
+        
+        # Contango percentile insight
+        if 'contango_pct' in stats:
+            contango_stats = stats['contango_pct']
+            percentile = contango_stats.get('percentile', 50)
+            
+            if percentile >= 85:
+                insights.append(f"📈 Contango at {percentile:.0f}th percentile - Steep carry costs")
+            elif percentile <= 15:
+                insights.append(f"📉 Contango at {percentile:.0f}th percentile - Unusual flatness/inversion")
+        
+        # Roll carry insight
+        if 'roll_carry_pct' in stats:
+            carry_stats = stats['roll_carry_pct']
+            percentile = carry_stats.get('percentile', 50)
+            
+            if percentile >= 80:
+                insights.append(f"💰 Roll carry at {percentile:.0f}th percentile - High decay for long vol")
+            elif percentile <= 20:
+                insights.append(f"💡 Roll carry at {percentile:.0f}th percentile - Low decay environment")
+        
+        # Multi-period comparison
+        if '1_month' in rankings and '3_months' in rankings:
+            # Check for divergence between short and long term
+            if 'spot_vix' in rankings.get('1_month', {}) and 'spot_vix' in rankings.get('3_months', {}):
+                month_pct = rankings['1_month']['spot_vix']['percentile']
+                quarter_pct = rankings['3_months']['spot_vix']['percentile']
+                
+                if month_pct > quarter_pct + 20:
+                    insights.append("🔄 VIX rising vs 3-month average - Volatility trending up")
+                elif month_pct < quarter_pct - 20:
+                    insights.append("🔄 VIX falling vs 3-month average - Volatility trending down")
+        
+        return insights if insights else ["📊 Market metrics within normal historical ranges"]
 
 
 def calculate_term_structure_metrics(spot_vix: float, futures_df: pd.DataFrame) -> Dict:

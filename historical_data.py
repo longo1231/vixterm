@@ -6,11 +6,13 @@ Provides SQLite-based storage and retrieval of VIX analysis results with change 
 import sqlite3
 import json
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 import glob
 import os
+from scipy import stats
 
 
 class VIXHistoricalData:
@@ -446,6 +448,249 @@ class VIXHistoricalData:
                 }
                 
         except Exception as e:
+            return {'error': str(e)}
+    
+    def calculate_statistical_context(self, current_values: Dict, lookback_days: int = 252) -> Dict:
+        """
+        Calculate statistical context for current values compared to historical data.
+        
+        Args:
+            current_values: Dict with keys like 'spot_vix', 'roll_carry_pct', 'contango_pct'
+            lookback_days: Number of days to look back for historical comparison (default 252 = 1 year)
+            
+        Returns:
+            Dict with percentiles, z-scores, min/max, averages for each metric
+        """
+        try:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+            
+            with sqlite3.connect(self.db_path) as conn:
+                # Get historical data for the lookback period
+                query = '''
+                    SELECT date_only, spot_vix, roll_carry_pct, spot_to_front, front_to_second,
+                           curve_shape, trading_signal
+                    FROM vix_historical 
+                    WHERE date_only BETWEEN ? AND ?
+                    ORDER BY timestamp
+                '''
+                df = pd.read_sql_query(query, conn, params=(start_date, end_date))
+                
+                if df.empty:
+                    return {'error': 'No historical data available for statistical analysis'}
+                
+                # Calculate contango percentage (spot to front spread as % of spot)
+                df['contango_pct'] = (df['spot_to_front'] / df['spot_vix']) * 100
+                
+                # Initialize results
+                statistical_context = {}
+                
+                # Metrics to analyze
+                metrics = {
+                    'spot_vix': current_values.get('spot_vix'),
+                    'roll_carry_pct': current_values.get('roll_carry_pct'),
+                    'contango_pct': current_values.get('contango_pct'),
+                    'spot_to_front': current_values.get('spot_to_front'),
+                    'front_to_second': current_values.get('front_to_second')
+                }
+                
+                for metric_name, current_value in metrics.items():
+                    if current_value is None or metric_name not in df.columns:
+                        continue
+                    
+                    # Get historical values
+                    historical = df[metric_name].dropna()
+                    
+                    if len(historical) < 20:  # Need minimum data points
+                        continue
+                    
+                    # Calculate statistics
+                    mean = historical.mean()
+                    std = historical.std()
+                    
+                    # Calculate percentile rank
+                    percentile = stats.percentileofscore(historical, current_value, kind='mean')
+                    
+                    # Calculate z-score
+                    z_score = (current_value - mean) / std if std > 0 else 0
+                    
+                    # Find min/max
+                    hist_min = historical.min()
+                    hist_max = historical.max()
+                    
+                    # Calculate moving averages
+                    ma_30 = historical.tail(30).mean() if len(historical) >= 30 else mean
+                    ma_60 = historical.tail(60).mean() if len(historical) >= 60 else mean
+                    
+                    # Determine regime (high/normal/low)
+                    if percentile >= 80:
+                        regime = "High"
+                    elif percentile <= 20:
+                        regime = "Low"
+                    else:
+                        regime = "Normal"
+                    
+                    # Store results
+                    statistical_context[metric_name] = {
+                        'current': round(current_value, 2),
+                        'percentile': round(percentile, 1),
+                        'z_score': round(z_score, 2),
+                        'mean': round(mean, 2),
+                        'std_dev': round(std, 2),
+                        'min': round(hist_min, 2),
+                        'max': round(hist_max, 2),
+                        'ma_30': round(ma_30, 2),
+                        'ma_60': round(ma_60, 2),
+                        'regime': regime,
+                        'samples': len(historical)
+                    }
+                
+                # Add curve shape distribution
+                if 'curve_shape' in df.columns:
+                    shape_counts = df['curve_shape'].value_counts()
+                    total_counts = shape_counts.sum()
+                    shape_distribution = {
+                        shape: round((count / total_counts) * 100, 1)
+                        for shape, count in shape_counts.items()
+                    }
+                    statistical_context['curve_shape_distribution'] = shape_distribution
+                    statistical_context['current_curve_shape'] = current_values.get('curve_shape')
+                
+                # Add lookback period info
+                statistical_context['lookback_days'] = lookback_days
+                statistical_context['data_points'] = len(df)
+                statistical_context['date_range'] = {
+                    'start': df.iloc[0]['date_only'] if not df.empty else start_date,
+                    'end': df.iloc[-1]['date_only'] if not df.empty else end_date
+                }
+                
+                return statistical_context
+                
+        except Exception as e:
+            print(f"❌ Failed to calculate statistical context: {e}")
+            return {'error': str(e)}
+    
+    def get_percentile_rankings(self, current_values: Dict, periods: List[int] = [30, 90, 252]) -> Dict:
+        """
+        Calculate percentile rankings for multiple time periods.
+        
+        Args:
+            current_values: Current metric values
+            periods: List of lookback periods in days
+            
+        Returns:
+            Dict with percentile rankings for each period
+        """
+        rankings = {}
+        
+        for days in periods:
+            period_label = self._get_period_label(days)
+            context = self.calculate_statistical_context(current_values, lookback_days=days)
+            
+            if 'error' not in context:
+                rankings[period_label] = {
+                    metric: {
+                        'percentile': data['percentile'],
+                        'regime': data['regime']
+                    }
+                    for metric, data in context.items()
+                    if isinstance(data, dict) and 'percentile' in data
+                }
+        
+        return rankings
+    
+    def _get_period_label(self, days: int) -> str:
+        """Convert days to human-readable period label."""
+        if days <= 30:
+            return "1_month"
+        elif days <= 90:
+            return "3_months"
+        elif days <= 180:
+            return "6_months"
+        elif days <= 365:
+            return "1_year"
+        else:
+            return f"{days}_days"
+    
+    def get_extreme_values(self, lookback_days: int = 252) -> Dict:
+        """
+        Get extreme values (records) from historical data.
+        
+        Returns:
+            Dict with record highs/lows and when they occurred
+        """
+        try:
+            end_date = datetime.now().strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Get extreme VIX values
+                cursor.execute('''
+                    SELECT date_only, spot_vix 
+                    FROM vix_historical 
+                    WHERE date_only BETWEEN ? AND ?
+                    ORDER BY spot_vix DESC
+                    LIMIT 1
+                ''', (start_date, end_date))
+                max_vix = cursor.fetchone()
+                
+                cursor.execute('''
+                    SELECT date_only, spot_vix 
+                    FROM vix_historical 
+                    WHERE date_only BETWEEN ? AND ?
+                    ORDER BY spot_vix ASC
+                    LIMIT 1
+                ''', (start_date, end_date))
+                min_vix = cursor.fetchone()
+                
+                # Get extreme roll carry
+                cursor.execute('''
+                    SELECT date_only, roll_carry_pct 
+                    FROM vix_historical 
+                    WHERE date_only BETWEEN ? AND ?
+                    ORDER BY roll_carry_pct DESC
+                    LIMIT 1
+                ''', (start_date, end_date))
+                max_carry = cursor.fetchone()
+                
+                cursor.execute('''
+                    SELECT date_only, roll_carry_pct 
+                    FROM vix_historical 
+                    WHERE date_only BETWEEN ? AND ?
+                    ORDER BY roll_carry_pct ASC
+                    LIMIT 1
+                ''', (start_date, end_date))
+                min_carry = cursor.fetchone()
+                
+                # Get extreme contango
+                cursor.execute('''
+                    SELECT date_only, spot_to_front 
+                    FROM vix_historical 
+                    WHERE date_only BETWEEN ? AND ?
+                    ORDER BY spot_to_front DESC
+                    LIMIT 1
+                ''', (start_date, end_date))
+                max_contango = cursor.fetchone()
+                
+                return {
+                    'vix': {
+                        'highest': {'value': max_vix[1], 'date': max_vix[0]} if max_vix else None,
+                        'lowest': {'value': min_vix[1], 'date': min_vix[0]} if min_vix else None
+                    },
+                    'roll_carry': {
+                        'highest': {'value': max_carry[1], 'date': max_carry[0]} if max_carry else None,
+                        'lowest': {'value': min_carry[1], 'date': min_carry[0]} if min_carry else None
+                    },
+                    'contango': {
+                        'highest': {'value': max_contango[1], 'date': max_contango[0]} if max_contango else None
+                    },
+                    'lookback_days': lookback_days
+                }
+                
+        except Exception as e:
+            print(f"❌ Failed to get extreme values: {e}")
             return {'error': str(e)}
 
 
