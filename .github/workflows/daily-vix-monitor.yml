@@ -40,12 +40,20 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
-    # Step 5: Run the VIX analysis
+    # Step 5: Restore historical database from previous runs
+    - name: Restore historical database
+      uses: actions/download-artifact@v4
+      with:
+        name: vix-historical-db
+        path: outputs/
+      continue-on-error: true
+    
+    # Step 6: Run the VIX analysis with historical context
     - name: Run VIX analysis
       run: |
         python main.py --save-plots --save-data
     
-    # Step 6: Send email with results
+    # Step 7: Send email with results
     - name: Send email notification
       env:
         EMAIL_HOST: ${{ secrets.EMAIL_HOST }}
@@ -56,7 +64,16 @@ jobs:
       run: |
         python email_sender.py
     
-    # Step 7: Upload results as artifacts (backup)
+    # Step 8: Archive historical database for next run
+    - name: Archive historical database
+      uses: actions/upload-artifact@v4
+      with:
+        name: vix-historical-db
+        path: outputs/vix_historical.db
+        retention-days: 90
+      if: always()
+    
+    # Step 9: Upload analysis results as artifacts (backup)
     - name: Upload analysis results
       uses: actions/upload-artifact@v4
       with:

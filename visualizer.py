@@ -138,21 +138,94 @@ class VIXVisualizer:
             all_days = np.concatenate([[0], days])
             all_prices = np.concatenate([[spot_vix], prices])
             
-            # Plot the curve
+            # Check for historical data and plot previous curve first (so it's in background)
+            has_historical = analysis_results.get('has_previous_data', False)
+            if has_historical:
+                previous_data = analysis_results.get('previous', {})
+                changes = analysis_results.get('changes', {})
+                contract_changes = {c['symbol']: c for c in changes.get('contracts', [])}
+                
+                # Create previous day data points
+                previous_spot = previous_data.get('spot_vix', spot_vix)
+                previous_days = []
+                previous_prices = []
+                
+                # Add previous spot at day 0
+                previous_days.append(0)
+                previous_prices.append(previous_spot)
+                
+                # Add previous futures prices (use current days, previous prices)
+                for i, (day, symbol) in enumerate(zip(days, futures_data['symbol'])):
+                    if symbol in contract_changes:
+                        previous_prices.append(contract_changes[symbol]['previous_price'])
+                        previous_days.append(day)
+                    else:
+                        # If no historical data for this contract, use current price
+                        previous_prices.append(prices[i])
+                        previous_days.append(day)
+                
+                # Plot previous day's curve in light gray dotted line
+                ax.plot(previous_days, previous_prices, 'o--', color='lightgray', 
+                       linewidth=2, markersize=6, alpha=0.7,
+                       label=f'Previous ({changes.get("days_since_previous", 1)} day ago)')
+            
+            # Plot current curve (on top)
+            current_label = 'Current VIX Term Structure'
+            if has_historical:
+                current_label = 'Current (Today)'
+            
             ax.plot(all_days, all_prices, 'bo-', linewidth=3, markersize=8, 
-                    label='VIX Term Structure')
+                    label=current_label)
             
-            # Highlight spot VIX
-            ax.plot(0, spot_vix, 'ro', markersize=12, label=f'VIX Spot: {spot_vix:.2f}')
+            # Highlight spot VIX with color based on change
+            spot_color = 'red'
+            if has_historical:
+                vix_change = analysis_results.get('changes', {}).get('spot_vix', {})
+                if vix_change.get('direction') == 'up':
+                    spot_color = 'darkgreen'
+                elif vix_change.get('direction') == 'down':
+                    spot_color = 'red'
+                else:
+                    spot_color = 'orange'
             
-            # Add spot VIX label
-            ax.annotate(f'VIX Spot\n{spot_vix:.2f}', (0, spot_vix), 
+            ax.plot(0, spot_vix, 'o', color=spot_color, markersize=12, 
+                   label=f'VIX Spot: {spot_vix:.2f}')
+            
+            # Add spot VIX label with change if available
+            spot_label = f'VIX Spot\n{spot_vix:.2f}'
+            if has_historical:
+                vix_change = analysis_results.get('changes', {}).get('spot_vix', {})
+                if vix_change.get('absolute', 0) != 0:
+                    direction_symbol = "↗" if vix_change['direction'] == 'up' else "↘" if vix_change['direction'] == 'down' else "→"
+                    spot_label += f'\n{direction_symbol}{vix_change["absolute"]:+.2f}'
+            
+            ax.annotate(spot_label, (0, spot_vix), 
                        textcoords="offset points", xytext=(0,10), 
                        ha='center', fontsize=9, fontweight='bold')
             
-            # Add contract labels for ALL contracts with prices
+            # Add contract labels for ALL contracts with prices and changes
             for i, (day, price, symbol) in enumerate(zip(days, prices, futures_data['symbol'])):
-                ax.annotate(f'{symbol}\n{price:.2f}', (day, price), 
+                label_text = f'{symbol}\n{price:.2f}'
+                
+                # Add change indicators if historical data available
+                if has_historical and symbol in contract_changes:
+                    change_info = contract_changes[symbol]
+                    change = change_info['absolute']
+                    if abs(change) >= 0.01:  # Only show significant changes
+                        direction_symbol = "↗" if change > 0 else "↘" if change < 0 else "→"
+                        label_text += f'\n{direction_symbol}{change:+.2f}'
+                        
+                        # Add subtle change indicator arrow
+                        if change > 0:
+                            ax.annotate('↗', (day, price), textcoords="offset points", 
+                                       xytext=(15, 15), ha='center', fontsize=12, 
+                                       color='darkgreen', fontweight='bold')
+                        elif change < 0:
+                            ax.annotate('↘', (day, price), textcoords="offset points", 
+                                       xytext=(15, 15), ha='center', fontsize=12, 
+                                       color='darkred', fontweight='bold')
+                
+                ax.annotate(label_text, (day, price), 
                            textcoords="offset points", xytext=(0,10), 
                            ha='center', fontsize=9, fontweight='bold')
             
@@ -271,9 +344,16 @@ class VIXVisualizer:
                bbox=dict(boxstyle="round,pad=0.5", facecolor='lightgray', alpha=0.8),
                color=signal_color)
         
-        # Overall title
-        plt.suptitle(f'VIX Term Structure Analysis - {analysis_results["timestamp"][:10]}', 
-                    fontsize=18, fontweight='bold')
+        # Enhanced title with historical context
+        title = f'VIX Term Structure Analysis - {analysis_results["timestamp"][:10]}'
+        if has_historical:
+            changes = analysis_results.get('changes', {})
+            vix_change = changes.get('spot_vix', {})
+            if vix_change.get('absolute', 0) != 0:
+                direction_symbol = "↗" if vix_change['direction'] == 'up' else "↘"
+                title += f'   |   VIX {direction_symbol} {vix_change["absolute"]:+.2f} ({vix_change["percentage"]:+.1f}%)'
+        
+        plt.suptitle(title, fontsize=18, fontweight='bold')
         plt.tight_layout()
         
         if save_path:

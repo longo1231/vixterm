@@ -16,10 +16,11 @@ from term_structure import TermStructureAnalyzer
 from visualizer import VIXVisualizer
 from alerts import VIXAlertSystem
 from file_manager import file_manager
+from historical_data import initialize_historical_data
 
 
 def create_readable_summary(analysis_results: Dict, futures_data: pd.DataFrame) -> str:
-    """Create a human-readable summary report."""
+    """Create a human-readable summary report with historical context."""
     
     timestamp = analysis_results['timestamp']
     date_str = timestamp[:10]
@@ -30,8 +31,35 @@ def create_readable_summary(analysis_results: Dict, futures_data: pd.DataFrame) 
     roll_carry = analysis_results.get('roll_carry', {})
     inversions = analysis_results.get('inversions', [])
     
-    # Create the summary
-    summary = f"""VIX Term Structure Summary - {date_str} {time_str}
+    # Check for historical context
+    has_historical = analysis_results.get('has_previous_data', False)
+    changes = analysis_results.get('changes', {})
+    previous = analysis_results.get('previous', {})
+    
+    # Create the summary with enhanced header
+    if has_historical:
+        vix_change = changes.get('spot_vix', {})
+        change_text = ""
+        if vix_change.get('absolute', 0) != 0:
+            direction_symbol = "↗" if vix_change['direction'] == 'up' else "↘" if vix_change['direction'] == 'down' else "→"
+            change_text = f" {direction_symbol} {vix_change['absolute']:+.2f} ({vix_change['percentage']:+.1f}%)"
+        
+        days_desc = f"{changes.get('days_since_previous', 1)} day" + ("s" if changes.get('days_since_previous', 1) > 1 else "")
+        summary = f"""VIX Term Structure Summary - {date_str} {time_str}
+{'=' * 50}
+
+MARKET OVERVIEW
+VIX Spot: {spot_vix:.2f}{change_text} from {days_desc} ago
+Previous VIX: {previous.get('spot_vix', 'N/A')} on {previous.get('date', 'N/A')}
+Number of Contracts: {len(futures_data)}
+Curve Shape: {analysis_results.get('curve_shape', 'N/A')}
+Trading Signal: {analysis_results.get('trading_signal', 'N/A')}
+
+HISTORICAL CONTEXT
+{changes.get('summary', 'No historical comparison available')}
+"""
+    else:
+        summary = f"""VIX Term Structure Summary - {date_str} {time_str}
 {'=' * 50}
 
 MARKET OVERVIEW
@@ -40,12 +68,18 @@ Number of Contracts: {len(futures_data)}
 Curve Shape: {analysis_results.get('curve_shape', 'N/A')}
 Trading Signal: {analysis_results.get('trading_signal', 'N/A')}
 
+HISTORICAL CONTEXT
+{changes.get('summary', 'No previous data available for comparison')}
+"""
+
+    # Points analysis section
+    summary += f"""
 POINTS ANALYSIS
 Spot to Front Month: {points_spreads.get('spot_to_front', 0):.2f} points
 Front to Second Month: {points_spreads.get('front_to_second', 0):.2f} points
 """
 
-    # Add contango/backwardation status
+    # Add contango/backwardation status with historical context
     spot_to_front = points_spreads.get('spot_to_front', 0)
     if spot_to_front > 0:
         summary += f"Status: CONTANGO (+{spot_to_front:.2f} pts)\n"
@@ -54,13 +88,31 @@ Front to Second Month: {points_spreads.get('front_to_second', 0):.2f} points
     else:
         summary += "Status: FLAT\n"
 
-    # Roll carry section
+    # Roll carry section with historical comparison
     summary += f"""
 ROLL CARRY ANALYSIS
 Synthetic 30-Day Index: {roll_carry.get('synthetic_index', 0):.2f}
 Roll Points: {roll_carry.get('roll_pts', 0):.4f}
-Roll Carry: {roll_carry.get('roll_pct', 0):.2f}%
-"""
+Roll Carry: {roll_carry.get('roll_pct', 0):.2f}%"""
+    
+    if has_historical:
+        roll_change = changes.get('roll_carry', {})
+        if roll_change.get('absolute', 0) != 0:
+            direction_symbol = "↗" if roll_change['direction'] == 'up' else "↘" if roll_change['direction'] == 'down' else "→"
+            summary += f" {direction_symbol} {roll_change['absolute']:+.2f}% from previous"
+    summary += "\n"
+
+    # Contract changes section (if historical data available)
+    if has_historical and changes.get('contracts'):
+        summary += f"\nCONTRACT CHANGES\n"
+        for contract in changes['contracts']:
+            symbol = contract['symbol']
+            current = contract['current_price']
+            previous = contract['previous_price']
+            change = contract['absolute']
+            pct = contract['percentage']
+            direction_symbol = "↗" if contract['direction'] == 'up' else "↘" if contract['direction'] == 'down' else "→"
+            summary += f"{symbol:<8} {current:>7.2f} {direction_symbol} {change:+6.2f} ({pct:+5.1f}%) from {previous:.2f}\n"
 
     # Inversions section
     if inversions:
@@ -99,10 +151,35 @@ def main():
                        help='Show information about output files and directories')
     parser.add_argument('--cleanup', type=int, metavar='DAYS',
                        help='Clean up files older than DAYS (default: no cleanup)')
+    parser.add_argument('--no-historical', action='store_true',
+                       help='Disable historical context and database features')
+    parser.add_argument('--migrate-data', action='store_true',
+                       help='Migrate existing JSON files to historical database')
     
     args = parser.parse_args()
     
-    # Handle info and cleanup options
+    # Initialize historical data system (unless disabled)
+    historical_enabled = not args.no_historical
+    historical_db = None
+    
+    if historical_enabled:
+        try:
+            historical_db = initialize_historical_data()
+            print("📚 Historical database initialized")
+        except Exception as e:
+            print(f"⚠️ Historical database initialization failed: {e}")
+            historical_enabled = False
+    
+    # Handle special options
+    if args.migrate_data:
+        if historical_db:
+            print("🔄 Starting data migration...")
+            migrated = historical_db.migrate_json_files()
+            print(f"✅ Migration complete: {migrated} files migrated")
+        else:
+            print("❌ Cannot migrate data: historical database not available")
+        return
+    
     if args.info:
         info = file_manager.get_file_info()
         print("📁 VIX Monitor File Information")
@@ -112,6 +189,22 @@ def main():
         print(f"Data: {info['file_counts']['data']} files") 
         print(f"Logs: {info['file_counts']['logs']} files")
         print(f"Total size: {info['total_size_mb']} MB")
+        
+        # Show historical database stats if available
+        if historical_db:
+            db_stats = historical_db.get_database_stats()
+            print(f"\n📊 Historical Database")
+            print("=" * 40)
+            if 'error' in db_stats:
+                print(f"Error: {db_stats['error']}")
+            else:
+                print(f"Analyses: {db_stats.get('record_counts', {}).get('main_analyses', 0)}")
+                print(f"Futures: {db_stats.get('record_counts', {}).get('futures_contracts', 0)}")
+                print(f"Inversions: {db_stats.get('record_counts', {}).get('inversions', 0)}")
+                date_range = db_stats.get('date_range', {})
+                if date_range.get('earliest'):
+                    print(f"Date range: {date_range['earliest']} to {date_range['latest']}")
+        
         print("\nRecent files:")
         for file_path in file_manager.list_recent_files(limit=5):
             print(f"  {file_path}")
@@ -152,12 +245,12 @@ def main():
         print(f"✅ VIX Spot: {spot_vix:.2f}")
         print(f"✅ Futures contracts: {len(futures_data)}")
         
-        # Analyze term structure
+        # Analyze term structure with historical context
         print("\n📈 Analyzing term structure...")
-        analyzer = TermStructureAnalyzer(spot_vix, futures_data)
+        analyzer = TermStructureAnalyzer(spot_vix, futures_data, enable_historical=historical_enabled)
         analysis_results = analyzer.get_term_structure_summary()
         
-        # Display key results
+        # Display key results with historical context
         print(f"\n📋 Analysis Results:")
         points_spreads = analysis_results.get('points_spreads', {})
         roll_carry = analysis_results.get('roll_carry', {})
@@ -166,6 +259,18 @@ def main():
         print(f"   Roll Carry: {roll_carry.get('roll_pct', 'N/A')}%")
         print(f"   Curve Shape: {analysis_results['curve_shape']}")
         print(f"   Trading Signal: {analysis_results['trading_signal']}")
+        
+        # Display historical context if available
+        if analysis_results.get('has_previous_data', False):
+            changes = analysis_results.get('changes', {})
+            days_back = analysis_results.get('days_since_previous', 1)
+            days_desc = f"{days_back} day" + ("s" if days_back > 1 else "")
+            print(f"\n📅 Historical Context ({days_desc} ago):")
+            print(f"   Previous VIX: {analysis_results.get('previous', {}).get('spot_vix', 'N/A')}")
+            print(f"   Change: {changes.get('spot_vix', {}).get('absolute', 'N/A'):+.2f} pts ({changes.get('spot_vix', {}).get('percentage', 'N/A'):+.1f}%)")
+            print(f"   Summary: {changes.get('summary', 'N/A')}")
+        elif historical_enabled:
+            print(f"\n📅 Historical Context: No previous data available")
         
         if analysis_results['inversions']:
             print(f"   ⚠️  Inversions: {len(analysis_results['inversions'])}")

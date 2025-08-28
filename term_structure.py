@@ -1,5 +1,5 @@
 """
-VIX term structure analysis and calculations.
+VIX term structure analysis and calculations with historical context.
 """
 
 import pandas as pd
@@ -9,11 +9,22 @@ from datetime import datetime
 
 
 class TermStructureAnalyzer:
-    """Analyzes VIX futures term structure for trading signals."""
+    """Analyzes VIX futures term structure for trading signals with historical context."""
     
-    def __init__(self, spot_vix: float, futures_data: pd.DataFrame):
+    def __init__(self, spot_vix: float, futures_data: pd.DataFrame, enable_historical: bool = True):
         self.spot_vix = spot_vix
         self.futures_data = futures_data.copy()
+        self.enable_historical = enable_historical
+        self.historical_data = None
+        
+        if enable_historical:
+            try:
+                from historical_data import historical_data
+                self.historical_data = historical_data
+            except ImportError:
+                print("⚠️ Historical data module not available, continuing without historical context")
+                self.enable_historical = False
+        
         self._prepare_data()
     
     def _prepare_data(self):
@@ -111,13 +122,16 @@ class TermStructureAnalyzer:
         
         return inversions
     
-    def get_term_structure_summary(self) -> Dict:
-        """Get comprehensive term structure analysis."""
+    def get_term_structure_summary(self, include_historical: bool = None) -> Dict:
+        """Get comprehensive term structure analysis with optional historical context."""
+        if include_historical is None:
+            include_historical = self.enable_historical
+            
         points_info = self.calculate_points_spreads()
         roll_carry_info = self.calculate_roll_carry()
         inversions = self.detect_inversions()
         
-        return {
+        base_analysis = {
             'timestamp': datetime.now().isoformat(),
             'spot_vix': self.spot_vix,
             'num_contracts': len(self.futures_data),
@@ -127,6 +141,23 @@ class TermStructureAnalyzer:
             'curve_shape': self._classify_curve_shape(),
             'trading_signal': self._generate_signal()
         }
+        
+        # Add historical context if enabled and available
+        if include_historical and self.historical_data:
+            try:
+                # Store current analysis first
+                self.historical_data.store_analysis(base_analysis, self.futures_data)
+                
+                # Get historical context
+                historical_context = self.get_historical_context()
+                if historical_context:
+                    base_analysis.update(historical_context)
+                    
+            except Exception as e:
+                print(f"⚠️ Historical context failed: {e}")
+                base_analysis['historical_error'] = str(e)
+        
+        return base_analysis
     
     def _classify_curve_shape(self) -> str:
         """Classify the overall shape of the term structure."""
@@ -163,6 +194,65 @@ class TermStructureAnalyzer:
             return 'Strong Backwardation - Consider Long Vol'
         else:
             return 'Neutral Structure'
+    
+    def get_historical_context(self) -> Optional[Dict]:
+        """Get historical context by comparing with previous day's data."""
+        if not self.historical_data:
+            return None
+            
+        try:
+            # Get previous day's data
+            previous_data = self.historical_data.get_previous_day_data()
+            if not previous_data:
+                return {
+                    'has_previous_data': False,
+                    'changes': {'summary': 'No previous data available for comparison'}
+                }
+            
+            # Calculate changes
+            current_analysis = {
+                'spot_vix': self.spot_vix,
+                'curve_shape': self._classify_curve_shape(),
+                'trading_signal': self._generate_signal(),
+                'roll_carry': self.calculate_roll_carry()
+            }
+            
+            changes = self.historical_data.calculate_changes(
+                current_analysis, self.futures_data, previous_data
+            )
+            
+            # Structure the response according to the plan
+            return {
+                'previous': {
+                    'date': previous_data['main_data']['date_only'],
+                    'spot_vix': previous_data['main_data']['spot_vix'],
+                    'curve_shape': previous_data['main_data']['curve_shape'],
+                    'trading_signal': previous_data['main_data']['trading_signal'],
+                    'roll_carry': {'roll_pct': previous_data['main_data']['roll_carry_pct']}
+                },
+                'changes': changes,
+                'days_since_previous': changes.get('days_since_previous', 1),
+                'has_previous_data': changes.get('has_previous_data', False)
+            }
+            
+        except Exception as e:
+            print(f"❌ Error getting historical context: {e}")
+            return {
+                'has_previous_data': False,
+                'changes': {'summary': f'Error retrieving historical context: {e}'}
+            }
+    
+    def store_current_analysis(self) -> bool:
+        """Manually store current analysis to database."""
+        if not self.historical_data:
+            return False
+            
+        try:
+            analysis = self.get_term_structure_summary(include_historical=False)
+            return self.historical_data.store_analysis(analysis, self.futures_data)
+        except Exception as e:
+            print(f"❌ Error storing analysis: {e}")
+            return False
 
 
 def calculate_term_structure_metrics(spot_vix: float, futures_df: pd.DataFrame) -> Dict:

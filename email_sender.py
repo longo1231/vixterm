@@ -42,7 +42,7 @@ class VIXEmailSender:
         return latest_chart, latest_data
     
     def read_summary_data(self, data_file: str) -> dict:
-        """Extract key metrics from summary file for email body."""
+        """Extract key metrics from summary file for email body with historical context."""
         metrics = {}
         
         try:
@@ -53,15 +53,31 @@ class VIXEmailSender:
                 lines = content.split('\n')
                 for line in lines:
                     if 'VIX Spot:' in line:
-                        metrics['spot_vix'] = line.split(':')[1].strip()
+                        # Enhanced to capture change info
+                        parts = line.split(':', 1)[1].strip()
+                        metrics['spot_vix'] = parts.split(' ')[0]  # Just the number
+                        if '↗' in line or '↘' in line:
+                            metrics['spot_vix_full'] = parts  # Full text with change
+                            metrics['has_historical'] = True
+                        else:
+                            metrics['spot_vix_full'] = parts
+                            metrics['has_historical'] = False
+                    elif 'Previous VIX:' in line:
+                        metrics['previous_vix'] = line.split(':')[1].strip()
                     elif 'Curve Shape:' in line:
                         metrics['curve_shape'] = line.split(':')[1].strip()
                     elif 'Trading Signal:' in line:
                         metrics['trading_signal'] = line.split(':')[1].strip()
-                    elif 'Roll Carry:' in line:
+                    elif 'Roll Carry:' in line and 'ANALYSIS' not in line:
                         metrics['roll_carry'] = line.split(':')[1].strip()
-                    elif 'Status:' in line and 'CONTANGO' in line:
+                    elif 'Status:' in line and ('CONTANGO' in line or 'BACKWARDATION' in line):
                         metrics['contango_status'] = line.split(':')[1].strip()
+                    elif line.startswith('HISTORICAL CONTEXT'):
+                        # Skip the header
+                        continue
+                    elif line.strip() and 'VIX up' in line and 'points' in line:
+                        # Capture historical summary
+                        metrics['historical_summary'] = line.strip()
                 
         except Exception as e:
             print(f"⚠️ Warning: Could not parse summary file: {e}")
@@ -109,6 +125,7 @@ class VIXEmailSender:
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #007bff;">
                         <h3 style="margin: 0 0 5px 0; color: #007bff;">VIX Spot</h3>
                         <p style="margin: 0; font-size: 24px; font-weight: bold;">{metrics.get('spot_vix', 'N/A')}</p>
+                        {f'<p style="margin: 5px 0 0 0; font-size: 14px; color: #666;">{metrics.get("spot_vix_full", "").replace(metrics.get("spot_vix", ""), "").strip()}</p>' if metrics.get('has_historical', False) else ''}
                     </div>
                     
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745;">
@@ -122,6 +139,12 @@ class VIXEmailSender:
                     <p><strong>Curve Shape:</strong> {metrics.get('curve_shape', 'N/A')}</p>
                     <p style="margin: 5px 0 0 0;"><strong>Status:</strong> {metrics.get('contango_status', 'N/A')}</p>
                 </div>
+                
+                {f'''<div style="background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107; margin-bottom: 20px;">
+                    <h3 style="margin: 0 0 10px 0; color: #856404;">📅 Daily Comparison</h3>
+                    <p style="margin: 0; font-style: italic;">{metrics.get('historical_summary', 'Historical context not available')}</p>
+                    {f'<p style="margin: 5px 0 0 0;"><strong>Previous VIX:</strong> {metrics.get("previous_vix", "N/A")}</p>' if metrics.get('previous_vix') else ''}
+                </div>''' if metrics.get('has_historical', False) else ''}
                 
                 <div style="background: #e7f3ff; padding: 15px; border-radius: 8px; border-left: 4px solid #0066cc;">
                     <h3 style="margin: 0 0 10px 0; color: #0066cc;">📎 Attachments</h3>
@@ -185,12 +208,21 @@ class VIXEmailSender:
             msg['From'] = self.username
             msg['To'] = self.recipient
             
-            # Dynamic subject based on trading signal
+            # Enhanced dynamic subject with historical context
             signal = metrics.get('trading_signal', 'Analysis Complete')
             spot_vix = metrics.get('spot_vix', 'N/A')
             date_str = datetime.now().strftime('%Y-%m-%d')
             
-            msg['Subject'] = f"VIX Monitor {date_str} - Spot {spot_vix} - {signal}"
+            # Add change info to subject if available
+            subject = f"VIX Monitor {date_str} - Spot {spot_vix}"
+            if metrics.get('has_historical', False):
+                spot_full = metrics.get('spot_vix_full', '')
+                change_info = spot_full.replace(spot_vix, '').strip()
+                if change_info:
+                    subject += f" ({change_info})"
+            subject += f" - {signal}"
+            
+            msg['Subject'] = subject
             
             # Create email body
             html_body = self.create_email_body(metrics, chart_file, data_file)
